@@ -1,0 +1,3 @@
+evdev>=1.6.0
+# grab_gui.py also needs system packages: python-gobject, gtk4, libcairo
+# Bluetooth RFCOMM needs a BlueZ-enabled Python build (usual on Linux)

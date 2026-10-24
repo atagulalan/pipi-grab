@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+"""Minimal grab UI — evdev exclusive input → Pi HID. Win×4 releases."""
+from __future__ import annotations
+
+import json
+import select
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+from evdev import InputDevice, ecodes, list_devices
+
+from envutil import getenv, load_dotenv
+from transport import BT_ADDR, HOST, Router
+
+load_dotenv()
+PORT = int(getenv("PIPI_GRAB_PORT", "8765") or "8765")
+WIN_NEEDED = 4
+WIN_WINDOW = 0.55
+SKIP_NAME = (
+    "keyd",
+    "libvirtualhid",
+    "vicinae",
+    "virtual",
+    "ydotool",
+    "uinput",
+)
+
+KEY_TO_HID: dict[int, int] = {
+    ecodes.KEY_A: 0x04, ecodes.KEY_B: 0x05, ecodes.KEY_C: 0x06, ecodes.KEY_D: 0x07,
+    ecodes.KEY_E: 0x08, ecodes.KEY_F: 0x09, ecodes.KEY_G: 0x0A, ecodes.KEY_H: 0x0B,
+    ecodes.KEY_I: 0x0C, ecodes.KEY_J: 0x0D, ecodes.KEY_K: 0x0E, ecodes.KEY_L: 0x0F,
+    ecodes.KEY_M: 0x10, ecodes.KEY_N: 0x11, ecodes.KEY_O: 0x12, ecodes.KEY_P: 0x13,
+    ecodes.KEY_Q: 0x14, ecodes.KEY_R: 0x15, ecodes.KEY_S: 0x16, ecodes.KEY_T: 0x17,
+    ecodes.KEY_U: 0x18, ecodes.KEY_V: 0x19, ecodes.KEY_W: 0x1A, ecodes.KEY_X: 0x1B,
+    ecodes.KEY_Y: 0x1C, ecodes.KEY_Z: 0x1D,
+    ecodes.KEY_1: 0x1E, ecodes.KEY_2: 0x1F, ecodes.KEY_3: 0x20, ecodes.KEY_4: 0x21,
+    ecodes.KEY_5: 0x22, ecodes.KEY_6: 0x23, ecodes.KEY_7: 0x24, ecodes.KEY_8: 0x25,
+    ecodes.KEY_9: 0x26, ecodes.KEY_0: 0x27,
+    ecodes.KEY_ENTER: 0x28, ecodes.KEY_ESC: 0x29, ecodes.KEY_BACKSPACE: 0x2A,
+    ecodes.KEY_TAB: 0x2B, ecodes.KEY_SPACE: 0x2C,
+    ecodes.KEY_MINUS: 0x2D, ecodes.KEY_EQUAL: 0x2E,
+    ecodes.KEY_LEFTBRACE: 0x2F, ecodes.KEY_RIGHTBRACE: 0x30, ecodes.KEY_BACKSLASH: 0x31,
+    ecodes.KEY_SEMICOLON: 0x33, ecodes.KEY_APOSTROPHE: 0x34, ecodes.KEY_GRAVE: 0x35,
+    ecodes.KEY_COMMA: 0x36, ecodes.KEY_DOT: 0x37, ecodes.KEY_SLASH: 0x38,
+    ecodes.KEY_CAPSLOCK: 0x39,
+    ecodes.KEY_F1: 0x3A, ecodes.KEY_F2: 0x3B, ecodes.KEY_F3: 0x3C, ecodes.KEY_F4: 0x3D,
+    ecodes.KEY_F5: 0x3E, ecodes.KEY_F6: 0x3F, ecodes.KEY_F7: 0x40, ecodes.KEY_F8: 0x41,
+    ecodes.KEY_F9: 0x42, ecodes.KEY_F10: 0x43, ecodes.KEY_F11: 0x44, ecodes.KEY_F12: 0x45,
+    ecodes.KEY_SYSRQ: 0x46, ecodes.KEY_SCROLLLOCK: 0x47, ecodes.KEY_PAUSE: 0x48,
+    ecodes.KEY_INSERT: 0x49, ecodes.KEY_HOME: 0x4A, ecodes.KEY_PAGEUP: 0x4B,
+    ecodes.KEY_DELETE: 0x4C, ecodes.KEY_END: 0x4D, ecodes.KEY_PAGEDOWN: 0x4E,
+    ecodes.KEY_RIGHT: 0x4F, ecodes.KEY_LEFT: 0x50, ecodes.KEY_DOWN: 0x51, ecodes.KEY_UP: 0x52,
+    ecodes.KEY_NUMLOCK: 0x53,
+    ecodes.KEY_LEFTCTRL: 0xE0, ecodes.KEY_LEFTSHIFT: 0xE1, ecodes.KEY_LEFTALT: 0xE2,
+    ecodes.KEY_LEFTMETA: 0xE3,
+    ecodes.KEY_RIGHTCTRL: 0xE4, ecodes.KEY_RIGHTSHIFT: 0xE5, ecodes.KEY_RIGHTALT: 0xE6,
+    ecodes.KEY_RIGHTMETA: 0xE7,
+    ecodes.KEY_COMPOSE: 0x65,
+}
+META_KEYS = {ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA}
+BTN_MAP = {
+    ecodes.BTN_LEFT: "left",
+    ecodes.BTN_RIGHT: "right",
+    ecodes.BTN_MIDDLE: "middle",
+}
+
+HTML = r"""<!DOCTYPE html>
+<html lang="tr"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>pipi.grab</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@450;600&family=Syne:wght@800&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#0c0f0d;--ink:#e7efe8;--muted:#849288;--line:#243028;--a:#c8f542;--ok:#5ddea6;--bad:#ff6b4a;--hot:#ffb020;--bt:#6aa8ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+font-family:"IBM Plex Mono",monospace;color:var(--ink);
+background:radial-gradient(900px 420px at 0% 0%,#1a2a18,transparent 55%),var(--bg)}
+.w{width:min(420px,100%);display:flex;flex-direction:column;gap:16px}
+h1{font-family:Syne,sans-serif;font-size:clamp(1.8rem,5vw,2.3rem);margin:0;letter-spacing:-.04em}
+h1 i{color:var(--a);font-style:normal}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.st{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;gap:8px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--bad)}.dot.on{background:var(--ok)}
+.modes{display:flex;gap:6px}
+.modes button{padding:8px 12px}
+.modes button.on.wifi{background:var(--a);color:#10140f;border-color:var(--a)}
+.modes button.on.bt{background:var(--bt);color:#061018;border-color:var(--bt)}
+button{font:600 .72rem/1 "IBM Plex Mono",monospace;letter-spacing:.04em;text-transform:uppercase;
+border:1px solid var(--line);background:0;color:var(--ink);padding:9px 11px;cursor:pointer}
+#grab{min-height:220px;border:1px dashed var(--line);background:#070907;padding:20px;cursor:pointer;
+display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;text-align:center;
+user-select:none;transition:border-color .15s,box-shadow .15s}
+#grab:hover{border-color:#3a4a3e}
+#grab.on{border-style:solid;border-color:var(--hot);box-shadow:0 0 0 3px rgba(255,176,32,.14)}
+.big{font-family:Syne,sans-serif;font-size:1.35rem;font-weight:800}
+#grab.on .big{color:var(--hot)}
+.sub{color:var(--muted);font-size:.72rem;line-height:1.45;max-width:28ch}
+.hint,.log{font-size:.7rem;color:var(--muted)}.log{color:#8fb01f;min-height:1.2em}.log.e{color:var(--bad)}
+kbd{border:1px solid var(--line);padding:1px 5px;font-size:.65rem}
+</style></head><body><div class="w">
+<div class="row"><h1>pipi<i>.</i>grab</h1>
+<div class="st"><span class="dot" id="d"></span><span id="s">…</span></div></div>
+<div class="row">
+  <div class="modes">
+    <button type="button" class="wifi" id="mWifi">WiFi</button>
+    <button type="button" class="bt" id="mBt">Bluetooth</button>
+  </div>
+</div>
+<div id="grab" tabindex="0">
+  <div class="big" id="gt">Grab</div>
+  <div class="sub" id="gs">Keyboard + mouse → iPad<br/>Leave: <kbd>Win</kbd> × 4</div>
+</div>
+<p class="hint">evdev exclusive · host sees nothing while grabbed</p>
+<div class="log" id="log"></div>
+</div>
+<script>
+const grab=document.getElementById('grab'), gt=document.getElementById('gt'), gs=document.getElementById('gs');
+const d=document.getElementById('d'), s=document.getElementById('s'), log=document.getElementById('log');
+const mWifi=document.getElementById('mWifi'), mBt=document.getElementById('mBt');
+let mode='wifi', grabbed=false;
+const L=(m,e=false)=>{log.textContent=m;log.className='log'+(e?' e':'')};
+const api=(p,b)=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})})
+  .then(async r=>{const t=await r.text(); let j; try{j=JSON.parse(t)}catch{j={error:t}} if(!r.ok)throw new Error(j.error||t); return j});
+
+function paint(){
+  mWifi.classList.toggle('on', mode==='wifi');
+  mBt.classList.toggle('on', mode==='bt');
+  grab.classList.toggle('on', grabbed);
+  gt.textContent = grabbed ? 'GRABBED' : 'Grab';
+  gs.innerHTML = grabbed
+    ? 'All input → iPad<br/>Leave: <kbd>Win</kbd> × 4'
+    : 'Keyboard + mouse → iPad<br/>Leave: <kbd>Win</kbd> × 4';
+}
+async function setMode(m){
+  try{const j=await api('/mode',{mode:m}); mode=j.mode; paint(); L('mode '+mode); st()}
+  catch(e){L(String(e),1)}
+}
+mWifi.onclick=()=>setMode('wifi');
+mBt.onclick=()=>setMode('bt');
+
+async function toggleGrab(){
+  try{
+    const j=await api(grabbed?'/ungrab':'/grab',{});
+    grabbed=!!j.grabbed; paint();
+    L(grabbed?'grab on — host input locked':'grab off');
+  }catch(e){L(String(e),1)}
+}
+grab.onclick=()=>toggleGrab();
+
+async function st(){
+  try{
+    const j=await(await fetch('/status')).json();
+    mode=j.mode||mode; grabbed=!!j.grabbed; paint();
+    d.classList.toggle('on',!!j.ok);
+    s.textContent = j.ok ? ((mode==='bt'?'bt':'wifi')+(grabbed?' · grab':'')) : (j.error||'down');
+  }catch{d.classList.remove('on');s.textContent='down'}
+}
+st(); setInterval(st,1000);
+</script></body></html>
+"""
+
+
+def _is_virtual(name: str) -> bool:
+    n = name.lower()
+    return any(s in n for s in SKIP_NAME)
+
+
+def find_devices() -> list[InputDevice]:
+    """Physical kb/mouse only. Compositor reads these directly; keyd virtual
+    alone is not enough to lock the host on this machine."""
+    found: list[InputDevice] = []
+    seen: set[str] = set()
+    for path in list_devices():
+        try:
+            dev = InputDevice(path)
+        except (OSError, PermissionError):
+            continue
+        if _is_virtual(dev.name):
+            continue
+        caps = dev.capabilities(verbose=False)
+        keys = caps.get(ecodes.EV_KEY, [])
+        rels = caps.get(ecodes.EV_REL, [])
+        is_kbd = ecodes.EV_KEY in caps and ecodes.KEY_A in keys
+        is_mouse = (ecodes.EV_REL in caps and ecodes.REL_X in rels) or ecodes.BTN_LEFT in keys
+        if not (is_kbd or is_mouse):
+            continue
+        if path in seen:
+            continue
+        seen.add(path)
+        found.append(dev)
+    return found
+
+
+class Grabber:
+    def __init__(self, router: Router) -> None:
+        self.router = router
+        self._lock = threading.Lock()
+        self._active = False
+        self._devs: list[InputDevice] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._win_taps: list[float] = []
+        self.last_error: str | None = None
+        self.device_names: list[str] = []
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    def grab(self) -> None:
+        with self._lock:
+            if self._active:
+                return
+            if not self.router.ok:
+                self.router.start()
+            devs = find_devices()
+            if not devs:
+                raise RuntimeError("no keyboard/mouse devices found")
+            grabbed: list[InputDevice] = []
+            errors: list[str] = []
+            for d in devs:
+                try:
+                    d.grab()
+                    grabbed.append(d)
+                except OSError as e:
+                    errors.append(f"{d.name}: {e}")
+                    try:
+                        d.close()
+                    except OSError:
+                        pass
+            if not grabbed:
+                raise RuntimeError("grab failed on all devices: " + "; ".join(errors))
+            if errors:
+                print(f"grab partial skips: {errors}", flush=True)
+            self._devs = grabbed
+            self.device_names = [d.name for d in grabbed]
+            self._stop.clear()
+            self._win_taps.clear()
+            self._active = True
+            self.last_error = None
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+            print(f"grabbed: {self.device_names}", flush=True)
+
+    def ungrab(self) -> None:
+        with self._lock:
+            self._ungrab_locked()
+
+    def _ungrab_locked(self) -> None:
+        if not self._active and not self._devs:
+            return
+        self._stop.set()
+        self._active = False
+        for d in self._devs:
+            try:
+                d.ungrab()
+            except OSError:
+                pass
+            try:
+                d.close()
+            except OSError:
+                pass
+        self._devs = []
+        self.device_names = []
+        try:
+            self.router.send("X")
+        except Exception:
+            pass
+        print("ungrabbed", flush=True)
+
+    def _note_win(self) -> bool:
+        now = time.monotonic()
+        if self._win_taps and now - self._win_taps[-1] > WIN_WINDOW:
+            self._win_taps.clear()
+        self._win_taps.append(now)
+        self._win_taps = [t for t in self._win_taps if now - t <= WIN_WINDOW * WIN_NEEDED]
+        if len(self._win_taps) >= WIN_NEEDED:
+            self._win_taps.clear()
+            return True
+        return False
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.is_set():
+                devs = list(self._devs)
+                if not devs:
+                    break
+                r, _, _ = select.select(devs, [], [], 0.25)
+                for dev in r:
+                    try:
+                        for event in dev.read():
+                            self._handle(event)
+                    except (OSError, BlockingIOError):
+                        continue
+        finally:
+            with self._lock:
+                if self._active:
+                    self._ungrab_locked()
+
+    def _handle(self, event) -> None:
+        if event.type == ecodes.EV_KEY:
+            btn = BTN_MAP.get(event.code)
+            if btn is not None:
+                if event.value == 1:
+                    self.router.send(f"P:{btn}")
+                elif event.value == 0:
+                    self.router.send(f"R:{btn}")
+                return
+
+            hid = KEY_TO_HID.get(event.code)
+            if hid is None:
+                return
+
+            # Win/Meta: still forwarded to iPad; ×4 also unlocks grab
+            unlock = False
+            if event.code in META_KEYS and event.value == 1:
+                unlock = self._note_win()
+
+            if event.value == 1:
+                self.router.send(f"D:{hid}")
+            elif event.value == 0:
+                self.router.send(f"U:{hid}")
+
+            if unlock:
+                with self._lock:
+                    self._ungrab_locked()
+            return
+
+        if event.type == ecodes.EV_REL:
+            if event.code == ecodes.REL_X:
+                self.router.send_mouse(int(event.value), 0, 0)
+            elif event.code == ecodes.REL_Y:
+                self.router.send_mouse(0, int(event.value), 0)
+            elif event.code == ecodes.REL_WHEEL:
+                if event.value:
+                    self.router.send_mouse(0, 0, int(event.value))
+
+
+router = Router()
+grabber = Grabber(router)
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt: str, *args) -> None:
+        pass
+
+    def _json(self, code: int, obj: dict) -> None:
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self) -> dict:
+        n = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(n)) if n else {}
+
+    def do_GET(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path == "/":
+            data = HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path == "/status":
+            return self._json(
+                200,
+                {
+                    "ok": router.ok,
+                    "mode": router.mode,
+                    "grabbed": grabber.active,
+                    "devices": grabber.device_names,
+                    "error": router.last_error or grabber.last_error,
+                    "bt": BT_ADDR,
+                    "host": HOST,
+                },
+            )
+        self._json(404, {"error": "not found"})
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        try:
+            data = self._read_json()
+            if path == "/mode":
+                if grabber.active:
+                    return self._json(409, {"error": "ungrab before switching mode"})
+                router.set_mode(str(data.get("mode", "wifi")))
+                return self._json(200, {"ok": True, "mode": router.mode})
+            if path == "/grab":
+                grabber.grab()
+                return self._json(200, {"ok": True, "grabbed": True, "devices": grabber.device_names})
+            if path == "/ungrab":
+                grabber.ungrab()
+                return self._json(200, {"ok": True, "grabbed": False})
+            self._json(404, {"error": "not found"})
+        except Exception as e:  # noqa: BLE001
+            grabber.last_error = str(e)
+            self._json(500, {"error": str(e)})
+
+
+def main() -> None:
+    print(f"devices: {[d.name for d in find_devices()]}", flush=True)
+    print(f"starting {router.mode} → pipi ...", flush=True)
+    try:
+        router.start()
+    except Exception as e:
+        router.last_error = str(e)
+        print(f"warn: {e}", flush=True)
+        if router.mode == "bt":
+            try:
+                router.set_mode("wifi")
+            except Exception as e2:
+                print(f"wifi also failed: {e2}", flush=True)
+    print(f"UI: http://127.0.0.1:{PORT}  (Win×{WIN_NEEDED} to ungrab)", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()
