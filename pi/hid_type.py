@@ -64,11 +64,26 @@ def _nonblock(f) -> None:
 
 
 def _write_nb(f, data: bytes) -> None:
-    """Mouse: drop if host isn't polling (avoid wedging BT/SSH)."""
+    """Motion/wheel: drop if host isn't polling (avoid wedging BT/SSH)."""
     try:
         f.write(data)
     except (BlockingIOError, OSError):
         pass
+
+
+def _write_btn(f, data: bytes, budget: float = 0.02) -> bool:
+    """Button state: retry briefly — never silently drop press/release."""
+    deadline = time.monotonic() + budget
+    while True:
+        try:
+            f.write(data)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.001)
+        except OSError:
+            return False
 
 
 class HidTyper:
@@ -144,6 +159,13 @@ class HidTyper:
     def mouse_move(self, dx: int, dy: int, wheel: int = 0):
         self._mreport(dx, dy, wheel)
 
+    def _breport(self) -> bool:
+        """Send a zero-motion report carrying current button bits."""
+        return _write_btn(
+            self._hidg_mouse,
+            bytes([self._mbtn & 0x07, 0, 0, 0]),
+        )
+
     def mouse_click(self, button: str = "left"):
         self.mouse_down(button)
         self.mouse_up(button)
@@ -151,9 +173,11 @@ class HidTyper:
     def mouse_down(self, button: str = "left"):
         bit = {"left": 1, "right": 2, "middle": 4}.get(button, 1)
         self._mbtn |= bit
-        self._mreport(0, 0, 0)
+        if self._breport():
+            # Let host sample button-down before an immediate up (same as mod chord)
+            time.sleep(0.008)
 
     def mouse_up(self, button: str = "left"):
         bit = {"left": 1, "right": 2, "middle": 4}.get(button, 1)
         self._mbtn &= ~bit
-        self._mreport(0, 0, 0)
+        self._breport()

@@ -110,6 +110,7 @@ class Grabber:
         self.device_names: list[str] = []
         self._shift_held: set[int] = set()  # HID mods down — for chord pacing
         self._last_mod_down_mono = 0.0
+        self._last_btn_down_mono = 0.0  # mouse button dwell (Mac must see down)
 
     @property
     def active(self) -> bool:
@@ -223,7 +224,12 @@ class Grabber:
             if btn is not None:
                 if event.value == 1:  # press
                     self.router.send(f"P:{btn}")
+                    self._last_btn_down_mono = time.monotonic()
                 elif event.value == 0:  # release
+                    # Same settle window as Shift+key — Mac must observe down first
+                    wait = 0.02 - (time.monotonic() - self._last_btn_down_mono)
+                    if wait > 0:
+                        time.sleep(wait)
                     self.router.send(f"R:{btn}")
                 return
 

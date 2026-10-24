@@ -1,6 +1,7 @@
 #!/bin/bash
 # PC-side: if Wi-Fi SSH works and the Pi lacks our HID stack, install it over SSH.
-# Safe to run often — exits quickly when already OK.
+# After a successful check/install for the current pi/VERSION, stamps .ensure_ok
+# so later ./run.sh skips SSH until VERSION bumps (or PIPI_FORCE_ENSURE=1).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
@@ -13,9 +14,22 @@ HOST="${PIPI_HOST:-}"
 USER_N="${PIPI_USER:-}"
 PASS="${PIPI_PASS:-}"
 SKIP="${PIPI_SKIP_ENSURE:-0}"
+FORCE="${PIPI_FORCE_ENSURE:-0}"
+STAMP="$ROOT/.ensure_ok"
+want_ver="$(tr -d '[:space:]' < "$ROOT/pi/VERSION")"
+
+stamp_ok() {
+  printf '%s\n' "$want_ver" > "$STAMP"
+}
 
 if [ "$SKIP" = "1" ] || [ "$SKIP" = "true" ]; then
   echo "ensure_pi: skipped (PIPI_SKIP_ENSURE=1)"
+  exit 0
+fi
+
+if [ "$FORCE" != "1" ] && [ "$FORCE" != "true" ] \
+  && [ -f "$STAMP" ] && [ "$(tr -d '[:space:]' < "$STAMP")" = "$want_ver" ]; then
+  echo "ensure_pi: already OK for ver=$want_ver (stamp) — skip"
   exit 0
 fi
 
@@ -48,8 +62,6 @@ scp_base=(
   -o ConnectTimeout=8
 )
 
-want_ver="$(tr -d '[:space:]' < "$ROOT/pi/VERSION")"
-
 remote() {
   "${ssh_base[@]}" "$@"
 }
@@ -81,6 +93,7 @@ if ! status="$(check_remote 2>/dev/null)"; then
 fi
 
 if [ "$status" = "OK" ]; then
+  stamp_ok
   echo "ensure_pi: already installed (ver=$want_ver)"
   exit 0
 fi
@@ -104,6 +117,7 @@ remote "chmod +x '$STAGE/install_remote.sh' && printf '%s\n' '$PASS' | sudo -S -
 
 status2="$(check_remote 2>/dev/null || echo FAIL)"
 if [ "$status2" = "OK" ]; then
+  stamp_ok
   echo "ensure_pi: install OK"
   exit 0
 fi

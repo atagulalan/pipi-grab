@@ -63,7 +63,7 @@ With `PIPI_HOST` / `PIPI_USER` / `PIPI_PASS` set, from the PC:
 
 That SSHes in, checks `/dev/hidg*`, mouse `report_length=4` / `subclass=0`, and `/etc/pipi-grab.ver`. If anything’s wrong it uploads `pi/` and runs `pi/install_remote.sh` (clones [pi-hid](https://github.com/thiagofeijodev/pi-hid) if needed, venv, overlays, systemd, BT server).
 
-`./run.sh` calls `ensure_pi.sh` first. Skip with `PIPI_SKIP_ENSURE=1`.
+`./run.sh` calls `ensure_pi.sh` first. After a successful check it stamps `.ensure_ok` for the current `pi/VERSION` and skips SSH on later runs until that version changes. Force a re-check with `PIPI_FORCE_ENSURE=1` or delete `.ensure_ok`. Skip entirely with `PIPI_SKIP_ENSURE=1`.
 
 First-time `dtoverlay=dwc2` may need a **Pi reboot**, then `./ensure_pi.sh` again. Plug the Pi’s **data** USB into the target and check:
 
