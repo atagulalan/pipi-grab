@@ -53,7 +53,7 @@ If `pipi.local` fails, find the IP on your router or with `nmap` / ARP, then set
 
 ## 2. Pi HID stack (auto over Wi‑Fi)
 
-This repo ships the working Pi files under **`pi/`** (Mac-friendly relative mouse: 5-byte report, wheel + AC Pan, `subclass=0` — boot-protocol mice drop scroll on macOS).
+This repo ships the working Pi files under **`pi/`**: classic **4-byte** relative mouse (`buttons, X, Y, wheel`) with `subclass=0` (Mac-friendly — boot-protocol mice often drop scroll), plus `hid_type` / `agent` / `bt_server` and systemd units.
 
 With `PIPI_HOST` / `PIPI_USER` / `PIPI_PASS` set, from the PC:
 
@@ -61,7 +61,7 @@ With `PIPI_HOST` / `PIPI_USER` / `PIPI_PASS` set, from the PC:
 ./ensure_pi.sh
 ```
 
-That SSHes in, checks `/dev/hidg*`, mouse `report_length=5` / `subclass=0`, and `/etc/pipi-grab.ver`. If anything’s wrong it uploads `pi/` and runs `pi/install_remote.sh` (clones [pi-hid](https://github.com/thiagofeijodev/pi-hid) if needed, venv, overlays, systemd, BT server).
+That SSHes in, checks `/dev/hidg*`, mouse `report_length=4` / `subclass=0`, and `/etc/pipi-grab.ver`. If anything’s wrong it uploads `pi/` and runs `pi/install_remote.sh` (clones [pi-hid](https://github.com/thiagofeijodev/pi-hid) if needed, venv, overlays, systemd, BT server).
 
 `./run.sh` calls `ensure_pi.sh` first. Skip with `PIPI_SKIP_ENSURE=1`.
 
