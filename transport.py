@@ -40,13 +40,18 @@ class BaseTransport:
     def send_mouse(self, dx: int, dy: int, w: int = 0) -> None:
         raise NotImplementedError
 
+    def send_wheel(self, w: int) -> None:
+        """Wheel alone — some hosts ignore wheel when packed with x/y."""
+        if w:
+            self.send(f"M:0,0,{int(w)}")
+
 
 class SshTransport(BaseTransport):
     def __init__(self) -> None:
         self._proc: subprocess.Popen[str] | None = None
         self._ready = False
         self._wlock = threading.Lock()
-        self._pending_m = [0, 0, 0]
+        self._pending_m = [0, 0]  # dx, dy only — wheel is immediate
         self._m_sched = False
         self._m_lock = threading.Lock()
 
@@ -121,10 +126,13 @@ class SshTransport(BaseTransport):
         self._write(line)
 
     def send_mouse(self, dx: int, dy: int, w: int = 0) -> None:
+        if w:
+            self.send_wheel(w)
+        if not (dx or dy):
+            return
         with self._m_lock:
             self._pending_m[0] += dx
             self._pending_m[1] += dy
-            self._pending_m[2] += w
             if self._m_sched:
                 return
             self._m_sched = True
@@ -132,11 +140,11 @@ class SshTransport(BaseTransport):
 
     def _flush_mouse(self) -> None:
         with self._m_lock:
-            dx, dy, w = self._pending_m
-            self._pending_m = [0, 0, 0]
+            dx, dy = self._pending_m
+            self._pending_m = [0, 0]
             self._m_sched = False
-        if dx or dy or w:
-            self._write(f"M:{dx},{dy},{w}")
+        if dx or dy:
+            self._write(f"M:{dx},{dy},0")
 
 
 class BtTransport(BaseTransport):
@@ -144,7 +152,7 @@ class BtTransport(BaseTransport):
         self._sock: socket.socket | None = None
         self._ready = False
         self._wlock = threading.Lock()
-        self._pending_m = [0, 0, 0]
+        self._pending_m = [0, 0]
         self._m_sched = False
         self._m_lock = threading.Lock()
         self._err: str | None = None
@@ -220,10 +228,13 @@ class BtTransport(BaseTransport):
         self._write(line)
 
     def send_mouse(self, dx: int, dy: int, w: int = 0) -> None:
+        if w:
+            self.send_wheel(w)
+        if not (dx or dy):
+            return
         with self._m_lock:
             self._pending_m[0] += dx
             self._pending_m[1] += dy
-            self._pending_m[2] += w
             if self._m_sched:
                 return
             self._m_sched = True
@@ -231,11 +242,11 @@ class BtTransport(BaseTransport):
 
     def _flush_mouse(self) -> None:
         with self._m_lock:
-            dx, dy, w = self._pending_m
-            self._pending_m = [0, 0, 0]
+            dx, dy = self._pending_m
+            self._pending_m = [0, 0]
             self._m_sched = False
-        if dx or dy or w:
-            self._write(f"M:{dx},{dy},{w}")
+        if dx or dy:
+            self._write(f"M:{dx},{dy},0")
 
 
 class Router:
@@ -279,3 +290,6 @@ class Router:
 
     def send_mouse(self, dx: int, dy: int, w: int = 0) -> None:
         self.t.send_mouse(dx, dy, w)
+
+    def send_wheel(self, w: int) -> None:
+        self.t.send_wheel(w)

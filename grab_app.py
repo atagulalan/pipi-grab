@@ -14,6 +14,7 @@ from transport import Router
 load_dotenv()
 WIN_NEEDED = 4
 WIN_WINDOW = 0.55
+
 SKIP_NAME = (
     "keyd",
     "libvirtualhid",
@@ -103,6 +104,8 @@ class Grabber:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._win_taps: list[float] = []
+        self._wheel_hr = 0  # REL_WHEEL_HI_RES accumulator (120 = one notch)
+        self._wheel_hires = False  # True if any grabbed device exposes HI_RES
         self.last_error: str | None = None
         self.device_names: list[str] = []
 
@@ -137,13 +140,18 @@ class Grabber:
                 print(f"grab partial skips: {errors}", flush=True)
             self._devs = grabbed
             self.device_names = [d.name for d in grabbed]
+            self._wheel_hr = 0
+            self._wheel_hires = any(
+                ecodes.REL_WHEEL_HI_RES in (d.capabilities(False).get(ecodes.EV_REL) or [])
+                for d in grabbed
+            )
             self._stop.clear()
             self._win_taps.clear()
             self._active = True
             self.last_error = None
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
-            print(f"grabbed: {self.device_names}", flush=True)
+            print(f"grabbed: {self.device_names} hires_wheel={self._wheel_hires}", flush=True)
 
     def ungrab(self) -> None:
         with self._lock:
@@ -192,7 +200,10 @@ class Grabber:
                 for dev in r:
                     try:
                         for event in dev.read():
-                            self._handle(event)
+                            try:
+                                self._handle(event, getattr(dev, "name", "?"))
+                            except Exception as e:
+                                print(f"grab handle err: {e}", flush=True)
                     except (OSError, BlockingIOError):
                         continue
         finally:
@@ -200,13 +211,17 @@ class Grabber:
                 if self._active:
                     self._ungrab_locked()
 
-    def _handle(self, event) -> None:
+    def _emit_wheel(self, notches: int) -> None:
+        if notches:
+            self.router.send_wheel(int(notches))
+
+    def _handle(self, event, dev_name: str = "?") -> None:
         if event.type == ecodes.EV_KEY:
             btn = BTN_MAP.get(event.code)
             if btn is not None:
-                if event.value == 1:
+                if event.value == 1:  # press
                     self.router.send(f"P:{btn}")
-                elif event.value == 0:
+                elif event.value == 0:  # release
                     self.router.send(f"R:{btn}")
                 return
 
@@ -234,9 +249,21 @@ class Grabber:
                 self.router.send_mouse(int(event.value), 0, 0)
             elif event.code == ecodes.REL_Y:
                 self.router.send_mouse(0, int(event.value), 0)
+            elif event.code == ecodes.REL_WHEEL_HI_RES:
+                # 120 units = one detent; prefer this over legacy REL_WHEEL
+                self._wheel_hr += int(event.value)
+                notches = int(self._wheel_hr / 120)  # trunc toward 0
+                if notches:
+                    self._wheel_hr -= notches * 120
+                    self._emit_wheel(notches)
             elif event.code == ecodes.REL_WHEEL:
-                if event.value:
-                    self.router.send_mouse(0, 0, int(event.value))
+                # Legacy notches — skip when HI_RES is in use (avoids double scroll)
+                if not self._wheel_hires and event.value:
+                    self._emit_wheel(int(event.value))
+            elif event.code == ecodes.REL_HWHEEL_HI_RES:
+                pass  # horizontal wheel unused by HID report
+            elif event.code == ecodes.REL_HWHEEL:
+                pass
 
 
 router = Router()

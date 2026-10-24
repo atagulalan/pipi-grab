@@ -210,6 +210,7 @@ First response from the agent is `OK`.
 | No `pipi.local` | 2.4 GHz Wi‑Fi only; SSH enabled in Imager; same LAN |
 | No `/dev/hidg*` | `dtoverlay=dwc2,dr_mode=peripheral`, reboot, data cable, data port |
 | Target ignores keyboard | Apple hosts often need gadget VID/PID as in pi-hid defaults |
+| Scroll works nowhere / Mac: click OK, wheel dead | Mouse gadget must be **non-boot** (`hid.usb1/subclass` = `0`). Boot mouse is 3 bytes — no wheel. Replug USB after changing. |
 | `sshpass` / auth fail | `.env` user/pass; try `ssh USER@HOST` manually |
 | BT connect fails | Pair/trust Pi first; `bt_server.py` listening; correct `PIPI_BT` |
 | Grab fails / no devices | User in `input` group; not grabbing virtual devices (keyd, ydotool, …) |
