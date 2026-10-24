@@ -1,11 +1,10 @@
-<img src="https://raw.githubusercontent.com/atagulalan/pipi-type/main/docs/banner-light.svg#gh-light-mode-only" width="50%" alt="pipi.type — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
-<img src="https://raw.githubusercontent.com/atagulalan/pipi-type/main/docs/banner-dark.svg#gh-dark-mode-only" width="50%" alt="pipi.type — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
+<img src="https://raw.githubusercontent.com/atagulalan/pipi-grab/main/docs/banner-light.svg#gh-light-mode-only" width="50%" alt="pipi.grab — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
+<img src="https://raw.githubusercontent.com/atagulalan/pipi-grab/main/docs/banner-dark.svg#gh-dark-mode-only" width="50%" alt="pipi.grab — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
 
-
-Control a **Raspberry Pi Zero W** that acts as a USB keyboard/mouse (HID gadget) for another device (Mac, iPad, PC). Your Linux PC talks to the Pi over **Wi‑Fi SSH** or **Bluetooth RFCOMM**; the Pi injects keystrokes and mouse moves into the USB host.
+Control a **Raspberry Pi Zero W** that acts as a USB keyboard/mouse (HID gadget) for another device (Mac, iPad, PC). Your Linux PC runs **pipi.grab** (native GTK + `evdev`) and talks to the Pi over **Wi‑Fi SSH** or **Bluetooth RFCOMM**; the Pi injects keystrokes and mouse moves into the USB host.
 
 ```
-[PC: grab UI / web UI]
+[PC: pipi.grab]
         │  Wi‑Fi SSH  or  Bluetooth RFCOMM
         ▼
 [Pi Zero W: agent / bt_server]
@@ -19,9 +18,8 @@ Control a **Raspberry Pi Zero W** that acts as a USB keyboard/mouse (HID gadget)
 | File | Role |
 |------|------|
 | `grab_gui.py` | Native GTK window — exclusive keyboard/mouse grab via `evdev` |
-| `grab_app.py` | Grab logic + optional local HTTP UI (`pipi.grab`) |
-| `serve.py` | Browser UI (`pipi.type`) — type box, grab pad, trackpad, Wi‑Fi/BT switch |
-| `transport.py` | Shared SSH + Bluetooth transports (used by grab) |
+| `grab_app.py` | Grab core (devices, HID map, grabber) used by the GUI |
+| `transport.py` | Shared SSH + Bluetooth transports |
 | `bt_server.py` | **Runs on the Pi** — RFCOMM server (same line protocol as SSH `agent.py`) |
 | `run.sh` | Launch `grab_gui.py` inside your graphical session |
 | `.env.example` | Template for secrets / host settings |
@@ -90,7 +88,7 @@ You should see `hidg0` / `hidg1`.
 
 ### SSH agent (Wi‑Fi path)
 
-pi-hid’s `~/pi-hid/webui/agent.py` speaks a simple line protocol over stdin. This project’s PC clients run:
+pi-hid’s `~/pi-hid/webui/agent.py` speaks a simple line protocol over stdin. This project’s PC client runs:
 
 ```text
 cd ~/pi-hid/webui && ../hid-venv/bin/python -u agent.py
@@ -133,8 +131,8 @@ Set `PIPI_BT` on the PC to that MAC.
 ## 4. PC: install this project
 
 ```bash
-git clone <your-fork-or-repo-url> pipi-type
-cd pipi-type
+git clone https://github.com/atagulalan/pipi-grab.git
+cd pipi-grab
 cp .env.example .env
 # edit .env — host, user, password, BT MAC
 
@@ -164,8 +162,6 @@ sudo usermod -aG input "$USER"
 | `PIPI_BT` | BT mode | Pi Bluetooth MAC |
 | `PIPI_BT_CH` | no | RFCOMM channel (default `1`) |
 | `PIPI_MODE` | no | `wifi` or `bt` (default `wifi`) |
-| `PIPI_UI_PORT` | no | `serve.py` port (default `8765`) |
-| `PIPI_GRAB_PORT` | no | `grab_app.py` HTTP port (default `8765`) |
 | `PIPI_REMOTE` | no | Remote command for SSH agent |
 
 Never commit `.env`. Only `.env.example` goes to GitHub.
@@ -176,24 +172,14 @@ Never commit `.env`. Only `.env.example` goes to GitHub.
 
 Pi must be reachable (Wi‑Fi) and/or BT server running; USB HID plugged into the **target**.
 
-### Native grab (recommended)
-
 ```bash
 ./run.sh
 # or: python3 grab_gui.py
 ```
 
 - Keyboard + mouse are grabbed exclusively and forwarded to the Pi.
-- Release grab: press **Win / Super** four times quickly (configurable in code).
-
-### Browser UIs
-
-```bash
-python3 serve.py          # http://127.0.0.1:8765  — type / grab / trackpad
-python3 grab_app.py       # http://127.0.0.1:8765  — grab-focused page
-```
-
-Switch Wi‑Fi ↔ Bluetooth from the UI when both paths are set up.
+- Release grab: press **Win / Super** four times quickly.
+- Switch Wi‑Fi ↔ Bluetooth from the GUI when both paths are set up.
 
 ---
 
@@ -227,7 +213,6 @@ First response from the agent is `OK`.
 | `sshpass` / auth fail | `.env` user/pass; try `ssh USER@HOST` manually |
 | BT connect fails | Pair/trust Pi first; `bt_server.py` listening; correct `PIPI_BT` |
 | Grab fails / no devices | User in `input` group; not grabbing virtual devices (keyd, ydotool, …) |
-| Wayland browser grab weak | Prefer `grab_gui.py` / `evdev` over Pointer Lock in Firefox |
 
 ---
 
@@ -235,7 +220,6 @@ First response from the agent is `OK`.
 
 - Prefer **SSH keys** long-term; password + `sshpass` is convenient but stores `PIPI_PASS` in `.env`.
 - BT server may run with relaxed RFCOMM link mode for simplicity — pair only devices you trust; don’t leave discoverable forever on untrusted networks.
-- Bind UIs to `127.0.0.1` by default; don’t expose them on LAN without auth.
 
 ---
 
