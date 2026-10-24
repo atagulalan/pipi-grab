@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/banner-light.svg">
-  <img src="docs/banner-light.svg" alt="pipi.type — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
+  <img src="docs/banner-light.svg" width="50%" alt="pipi.type — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
 </picture>
 
 Control a **Raspberry Pi Zero W** that acts as a USB keyboard/mouse (HID gadget) for another device (Mac, iPad, PC). Your Linux PC talks to the Pi over **Wi‑Fi SSH** or **Bluetooth RFCOMM**; the Pi injects keystrokes and mouse moves into the USB host.
