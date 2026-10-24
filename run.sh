@@ -4,6 +4,10 @@ cd "$(dirname "$0")"
 set -a
 [ -f .env ] && . ./.env
 set +a
+# Wi-Fi: ensure Pi HID stack (Mac-friendly mouse) if missing
+if [ "${PIPI_SKIP_ENSURE:-0}" != "1" ]; then
+  ./ensure_pi.sh || true
+fi
 # Run inside the graphical user session (Wayland/DBus)
 exec systemd-run --user --same-dir --collect \
   -E DISPLAY="${DISPLAY:-:0}" \

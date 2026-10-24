@@ -1,0 +1,14 @@
+[Unit]
+Description=Start HID USB gadget (pipi.grab / pi-hid)
+After=local-fs.target systemd-modules-load.service
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/bin/setup-hid.sh
+ExecStartPost=/bin/bash -c 'test -e /dev/hidg0 && chmod 666 /dev/hidg0; test -e /dev/hidg1 && chmod 666 /dev/hidg1; true'
+
+[Install]
+WantedBy=multi-user.target

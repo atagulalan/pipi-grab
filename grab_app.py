@@ -108,6 +108,8 @@ class Grabber:
         self._wheel_hires = False  # True if any grabbed device exposes HI_RES
         self.last_error: str | None = None
         self.device_names: list[str] = []
+        self._shift_held: set[int] = set()  # HID mods down — for chord pacing
+        self._last_mod_down_mono = 0.0
 
     @property
     def active(self) -> bool:
@@ -228,15 +230,34 @@ class Grabber:
             hid = KEY_TO_HID.get(event.code)
             if hid is None:
                 return
+            if event.value not in (0, 1):
+                return
 
-            # Win/Meta: still forwarded to iPad; ×4 also unlocks grab
+            # Track modifiers for chord pacing (TR "=" = Shift+0 arrives ~2ms apart)
+            if event.code in (ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT):
+                if event.value == 1:
+                    self._shift_held.add(hid)
+                    self.router.send(f"D:{hid}")
+                    self._last_mod_down_mono = time.monotonic()
+                else:
+                    self._shift_held.discard(hid)
+                    self.router.send(f"U:{hid}")
+                return
+
+            # Win/Meta: still forwarded; ×4 also unlocks grab
             unlock = False
             if event.code in META_KEYS and event.value == 1:
                 unlock = self._note_win()
 
             if event.value == 1:
+                # Give Mac time to see modifier report before the key (was ~2ms → flaky)
+                if self._shift_held:
+                    elapsed = time.monotonic() - self._last_mod_down_mono
+                    wait = 0.02 - elapsed
+                    if wait > 0:
+                        time.sleep(wait)
                 self.router.send(f"D:{hid}")
-            elif event.value == 0:
+            else:
                 self.router.send(f"U:{hid}")
 
             if unlock:

@@ -20,8 +20,9 @@ Control a **Raspberry Pi Zero W** that acts as a USB keyboard/mouse (HID gadget)
 | `grab_gui.py` | Native GTK window — exclusive keyboard/mouse grab via `evdev` |
 | `grab_app.py` | Grab core (devices, HID map, grabber) used by the GUI |
 | `transport.py` | Shared SSH + Bluetooth transports |
-| `bt_server.py` | **Runs on the Pi** — RFCOMM server (same line protocol as SSH `agent.py`) |
-| `run.sh` | Launch `grab_gui.py` inside your graphical session |
+| `bt_server.py` / `pi/` | **Pi bundle** — HID gadget, agent, BT server (Mac-friendly mouse) |
+| `ensure_pi.sh` | Over SSH: check Pi stack; install/refresh from `pi/` if missing |
+| `run.sh` | Runs `ensure_pi.sh` then `grab_gui.py` in your graphical session |
 | `.env.example` | Template for secrets / host settings |
 
 Secrets live in **`.env`** (gitignored). Copy from `.env.example`.
@@ -50,81 +51,39 @@ If `pipi.local` fails, find the IP on your router or with `nmap` / ARP, then set
 
 ---
 
-## 2. Pi: USB HID gadget ([pi-hid](https://github.com/thiagofeijodev/pi-hid))
+## 2. Pi HID stack (auto over Wi‑Fi)
 
-On the Pi:
+This repo ships the working Pi files under **`pi/`** (Mac-friendly relative mouse: 5-byte report, wheel + AC Pan, `subclass=0` — boot-protocol mice drop scroll on macOS).
 
-```bash
-sudo apt update
-sudo apt install -y git python3-venv python3-pip bluez bluez-tools
-
-git clone --depth 1 https://github.com/thiagofeijodev/pi-hid.git ~/pi-hid
-cd ~/pi-hid
-python3 -m venv hid-venv
-./hid-venv/bin/pip install -U pip
-./hid-venv/bin/pip install adafruit-circuitpython-hid
-```
-
-Enable the USB gadget overlays (paths may be `/boot/firmware/` on Bookworm):
+With `PIPI_HOST` / `PIPI_USER` / `PIPI_PASS` set, from the PC:
 
 ```bash
-# config.txt — peripheral mode
-echo 'dtoverlay=dwc2,dr_mode=peripheral' | sudo tee -a /boot/firmware/config.txt
-
-# cmdline.txt — load dwc2 early (append, do not replace the whole line)
-sudo sed -i 's/$/ modules-load=dwc2/' /boot/firmware/cmdline.txt
-
-# Avoid the host-mode driver fighting OTG
-echo 'blacklist dwc_otg' | sudo tee /etc/modprobe.d/blacklist-dwc_otg.conf
+./ensure_pi.sh
 ```
 
-Install / enable pi-hid’s HID setup scripts (see that repo’s README — typically `setup-hid.sh` + a systemd unit that creates `/dev/hidg0` keyboard and `/dev/hidg1` mouse). Reboot, plug the Pi’s **data** USB into the target device, then:
+That SSHes in, checks `/dev/hidg*`, mouse `report_length=5` / `subclass=0`, and `/etc/pipi-grab.ver`. If anything’s wrong it uploads `pi/` and runs `pi/install_remote.sh` (clones [pi-hid](https://github.com/thiagofeijodev/pi-hid) if needed, venv, overlays, systemd, BT server).
+
+`./run.sh` calls `ensure_pi.sh` first. Skip with `PIPI_SKIP_ENSURE=1`.
+
+First-time `dtoverlay=dwc2` may need a **Pi reboot**, then `./ensure_pi.sh` again. Plug the Pi’s **data** USB into the target and check:
 
 ```bash
-ls -l /dev/hidg*
+ls -l /dev/hidg*    # on the Pi — expect hidg0 + hidg1
 ```
 
-You should see `hidg0` / `hidg1`.
+### Manual (same as ensure)
 
-### SSH agent (Wi‑Fi path)
+On the Pi you can also copy `pi/` over and `sudo bash install_remote.sh`.
 
-pi-hid’s `~/pi-hid/webui/agent.py` speaks a simple line protocol over stdin. This project’s PC client runs:
+SSH agent command (default `PIPI_REMOTE`):
 
 ```text
 cd ~/pi-hid/webui && ../hid-venv/bin/python -u agent.py
 ```
 
-via SSH (override with `PIPI_REMOTE` in `.env` if your paths differ).
+### Bluetooth RFCOMM
 
-Smoke test from the Pi while USB is plugged into a text field on the target:
-
-```bash
-cd ~/pi-hid/webui
-../hid-venv/bin/python -c "from hid_type import HidTyper; HidTyper().type_text('hello from pipi')"
-```
-
----
-
-## 3. Pi: Bluetooth RFCOMM (optional)
-
-Copy this repo’s `bt_server.py` onto the Pi next to the HID helpers, e.g.:
-
-```bash
-scp bt_server.py YOUR_USER@pipi.local:~/pi-hid/webui/
-```
-
-It imports `hid_type` from `~/pi-hid/webui` and listens on RFCOMM channel **1**.
-
-Pair the Pi from your PC once (`bluetoothctl`), note the Pi’s MAC (`hcitool dev` / `bluetoothctl show`), then run on the Pi:
-
-```bash
-cd ~/pi-hid/webui
-../hid-venv/bin/python -u bt_server.py
-```
-
-Optional systemd unit (`pi-hid-bt.service`) so it starts on boot — `WorkingDirectory` = `~/pi-hid/webui`, `ExecStart` = the venv python + `bt_server.py`.
-
-Set `PIPI_BT` on the PC to that MAC.
+`ensure_pi` installs `bt_server.py` + `pi-hid-bt.service`. Pair once (`bluetoothctl`), set `PIPI_BT` on the PC to the Pi MAC.
 
 ---
 
