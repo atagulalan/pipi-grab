@@ -1,5 +1,3 @@
-# pipi-type
-
 <img src="https://raw.githubusercontent.com/atagulalan/pipi-type/main/docs/banner-light.svg#gh-light-mode-only" width="50%" alt="pipi.type — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
 <img src="https://raw.githubusercontent.com/atagulalan/pipi-type/main/docs/banner-dark.svg#gh-dark-mode-only" width="50%" alt="pipi.type — Pi Zero W USB HID keyboard & mouse over Wi-Fi / Bluetooth"/>
 
